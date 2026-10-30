@@ -420,7 +420,7 @@ def _minutes_from_value(value: Any):
 
     m = re.fullmatch(r"(\d{1,2}):(\d{2})(?::(\d{2}))?", s)
     if m:
-        now = datetime.now()
+        now = datetime.now().astimezone()
         target = now.replace(
             hour=int(m.group(1)),
             minute=int(m.group(2)),
@@ -439,9 +439,12 @@ def _minutes_from_value(value: Any):
     ):
         try:
             dt = parser(normalized)
+            now = datetime.now().astimezone()
             if dt.tzinfo is not None:
-                dt = dt.astimezone().replace(tzinfo=None)
-            return max(0, int((dt - datetime.now()).total_seconds() // 60))
+                dt = dt.astimezone()
+            else:
+                dt = dt.astimezone()
+            return max(0, int((dt - now).total_seconds() // 60))
         except Exception:
             continue
 
@@ -581,13 +584,16 @@ def api_arrivals():
         data = obj.get("data", obj) if isinstance(obj, dict) else obj
         arrivals = normalize_stop_timetable(data)
 
-        return jsonify({
+        res = {
             "ok": True,
             "stop_id": stop_id,
             "updated": int(time.time()),
             "arrivals": arrivals,
-            "raw": data,
-        })
+        }
+        if request.args.get("debug") == "1":
+            res["raw"] = data
+
+        return jsonify(res)
 
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 502
