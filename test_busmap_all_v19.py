@@ -101,5 +101,64 @@ class NormalizeStopTimetableTests(unittest.TestCase):
         self.assertEqual(normalize_stop_timetable({"arrivals": [{}]}), [])
 
 
+class ApiLiveTests(unittest.TestCase):
+    def setUp(self):
+        self.client = app.test_client()
+
+    @patch("busmap_all_v19.get_route_info")
+    @patch("busmap_all_v19.load_routes")
+    def test_line_mode_returns_stops_shapes_and_vehicles(self, mock_load_routes, mock_get_route_info):
+        mock_load_routes.return_value = [
+            {
+                "shortName": "31",
+                "longName": "ΒΟΥΛΓΑΡΗ - Κ.Τ.Ε.Λ.",
+                "color": "#1f6feb",
+                "tripHeadsigns": [
+                    {
+                        "routeId": "r31",
+                        "shapeId": "s31_1",
+                        "headsign": "ΠΡΟΣ Κ.Τ.Ε.Λ.",
+                    }
+                ],
+            }
+        ]
+        mock_get_route_info.return_value = {
+            "headsign": "ΠΡΟΣ Κ.Τ.Ε.Λ.",
+            "shape": {
+                "lineString": "LINESTRING(22.94 40.64, 22.95 40.65)",
+            },
+            "vehicles": [
+                {
+                    "id": "1801",
+                    "latitude": 40.642,
+                    "longitude": 22.945,
+                    "bearing": 120.0,
+                }
+            ],
+            "stops": [
+                {
+                    "id": "01042",
+                    "code": "01042",
+                    "name": "ΑΡΙΣΤΟΤΕΛΟΥΣ",
+                    "latitude": 40.635,
+                    "longitude": 22.941,
+                    "sequence": 1,
+                }
+            ],
+        }
+
+        res = self.client.get("/api/live?line=31")
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["mode"], "line")
+        self.assertEqual(data["line"], "31")
+        self.assertEqual(len(data["stops"]), 1)
+        self.assertEqual(data["stops"][0]["id"], "01042")
+        self.assertEqual(data["stops"][0]["name"], "ΑΡΙΣΤΟΤΕΛΟΥΣ")
+        self.assertEqual(len(data["shapes"]), 1)
+        self.assertEqual(len(data["vehicles"]), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

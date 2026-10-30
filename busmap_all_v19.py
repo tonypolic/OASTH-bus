@@ -20,6 +20,7 @@ Live χάρτης λεωφορείων ΟΣΕΘ/ΟΑΣΘ από το δημόσ�
 1. Σειριοποίηση live ανανεώσεων ώστε να μην επικαλύπτονται αιτήματα.
 2. Canvas rendering των στάσεων με L.circleMarker.
 3. Στοχευμένα tests για την κανονικοποίηση αφίξεων και χρόνων.
+4. Ανεξάρτητη εμφάνιση στάσεων επιλεγμένης γραμμής (lineStopLayer) ακόμη και με απενεργοποιημένες τις γενικές στάσεις δικτύου.
 
 Εγκατάσταση:
     py -m pip install flask requests
@@ -1010,7 +1011,7 @@ body {
 
     <button id="allBtn" title="Εμφάνιση όλων των κινούμενων λεωφορείων">ΟΛΑ</button>
     <button id="refreshBtn" title="Άμεση ανανέωση θέσεων">Ανανέωση</button>
-    <button id="stopsBtn" title="Εμφάνιση ή απόκρυψη στάσεων">Στάσεις: ON</button>
+    <button id="stopsBtn" title="Εμφάνιση ή απόκρυψη όλων των στάσεων δικτύου (οι στάσεις της επιλεγμένης γραμμής παραμένουν)">Στάσεις: ON</button>
 
     <label style="font-size: 13px; cursor: pointer;">
         <input type="checkbox" id="activeOnly" checked>
@@ -1046,6 +1047,7 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 
 const routeLayer = L.layerGroup().addTo(map);
 const allStopLayer = L.layerGroup().addTo(map);
+const lineStopLayer = L.layerGroup().addTo(map);
 const vehicleLayer = L.layerGroup().addTo(map);
 const stopRenderer = L.canvas({ padding: 0.5 });
 
@@ -1066,6 +1068,7 @@ let stopsVisible = localStorage.getItem("busmap_stops") !== "0";
 let liveRefreshPromise = null;
 let pendingLiveRefresh = false;
 let pendingForceFit = false;
+let renderedLineStopsLine = null;
 
 // Differential marker map: vehicleId -> L.Marker
 const vehicleMarkers = new Map();
@@ -1320,6 +1323,8 @@ async function selectArrivalBus(line, vehicle) {
     currentLine = line;
     localStorage.setItem("busmap_line", line);
     document.getElementById("allBtn").classList.remove("active");
+    lineStopLayer.clearLayers();
+    renderedLineStopsLine = null;
 
     const sel = document.getElementById("lineSelect");
     let optionExists = Array.from(sel.options).some(o => String(o.value) === line);
@@ -1364,6 +1369,17 @@ async function performLiveRefresh(forceFit = false) {
         url = "/api/live?line=" + encodeURIComponent(currentLine);
         warning.textContent = "";
     } else {
+        routeLayer.clearLayers();
+        lineStopLayer.clearLayers();
+        renderedLineStopsLine = null;
+        vehicleLayer.clearLayers();
+        vehicleMarkers.clear();
+        if (legendControl) {
+            map.removeControl(legendControl);
+            legendControl = null;
+        }
+        warning.textContent = "";
+        status.textContent = "Επιλέξτε γραμμή ή πατήστε ΟΛΑ.";
         return;
     }
 
@@ -1416,7 +1432,42 @@ async function performLiveRefresh(forceFit = false) {
             legendControl.addTo(map);
         }
 
-        // 2. Differential Marker Updates (χωρίς clearLayers/flicker)
+        // 2. Ενημέρωση Στάσεων Επιλεγμένης Γραμμής (ανεξάρτητο lineStopLayer)
+        if (!allMode && currentLine) {
+            if (renderedLineStopsLine !== currentLine || (lineStopLayer.getLayers().length === 0 && (j.stops || []).length > 0)) {
+                lineStopLayer.clearLayers();
+                for (const s of j.stops || []) {
+                    const m = L.circleMarker(
+                        [s.latitude, s.longitude],
+                        {
+                            renderer: stopRenderer,
+                            radius: 6,
+                            color: "#0969da",
+                            weight: 2.5,
+                            fillColor: "#ffffff",
+                            fillOpacity: 1
+                        }
+                    ).addTo(lineStopLayer);
+
+                    m.bindTooltip(`[Γραμμή ${escapeHtml(currentLine)}] ${escapeHtml(s.code)} — ${escapeHtml(s.name)}`, { direction: "top" });
+                    attachStopPopup(m, s);
+                }
+                renderedLineStopsLine = currentLine;
+            }
+        } else {
+            lineStopLayer.clearLayers();
+            renderedLineStopsLine = null;
+        }
+
+        if (bounds.length === 0 && j.stops && j.stops.length > 0) {
+            for (const s of j.stops) {
+                if (Number.isFinite(s.latitude) && Number.isFinite(s.longitude)) {
+                    bounds.push([s.latitude, s.longitude]);
+                }
+            }
+        }
+
+        // 3. Differential Marker Updates (χωρίς clearLayers/flicker)
         const incomingVehicleIds = new Set();
 
         for (const v of j.vehicles || []) {
@@ -1596,6 +1647,8 @@ document.getElementById("lineSelect").addEventListener("change", async e => {
     firstFit = true;
     vehicleLayer.clearLayers();
     vehicleMarkers.clear();
+    lineStopLayer.clearLayers();
+    renderedLineStopsLine = null;
     await refreshLive(true);
 });
 
@@ -1620,6 +1673,8 @@ document.getElementById("allBtn").addEventListener("click", async () => {
     firstFit = true;
     vehicleLayer.clearLayers();
     vehicleMarkers.clear();
+    lineStopLayer.clearLayers();
+    renderedLineStopsLine = null;
     await refreshLive(true);
 });
 
